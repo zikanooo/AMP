@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "Open Motion",
-  "short_name": "Open Motion",
-  "description": "Open Motion — motion graphics dan video editor berbasis web.",
+  "name": "Motion",
+  "short_name": "Motion",
+  "description": "Motion — motion graphics dan video editor berbasis web.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
