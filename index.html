@@ -26180,8 +26180,8 @@ const AMNativeSceneImporter={
   }
 };
 
-const AM_LINK_BRIDGE_ORIGIN=(typeof window!=="undefined"&&window.location?.origin)?(window.location.origin.replace(/\/?$/,'/')):"https://resolver.openmotionapp.my.id/";
-const AM_LINK_PACKAGE_API=AM_LINK_BRIDGE_ORIGIN?new URL('api/am/project',AM_LINK_BRIDGE_ORIGIN).href:null;
+const AM_LINK_BRIDGE_ORIGIN=(typeof window!=="undefined"&&window.location?.origin)?(window.location.origin.replace(/\/?$/,'/')):"/";
+const AM_LINK_PACKAGE_API=new URL('api/am/project',typeof window!=="undefined"?window.location.origin:'http://localhost:3000').href;
 const AM_LINK_RUNTIME_ORIGIN=AM_LINK_BRIDGE_ORIGIN;
 // Anonymous AM imports only. No account credentials, email links, or Auth requests.
 const amDialogStyle=document.createElement('style');
@@ -26219,7 +26219,7 @@ amDialogStyle.textContent=`
 `;
 document.head.append(amDialogStyle);
 
-const amImportDisplayText=value=>String(value??'').replace(/zervida/gi,'Layanan Cadangan');
+const amImportDisplayText=value=>String(value??'').replace(/zervida/gi,'Resolver Pihak Ketiga');
 const AMIndependentLinkUI={
   open(){
     const dialog=document.createElement('dialog');dialog.className='amDialog';
@@ -26229,10 +26229,10 @@ const AMIndependentLinkUI={
         <button class="amImportCloseBtn" type="button" aria-label="Tutup">✕</button>
       </div>
       <h3 class="amImportModalTitle">Impor Preset Motion</h3>
-      <p class="amImportModalSub">Masukkan link share Alight Motion (.am) atau file XML proyek untuk langsung dibuka di timeline.</p>
+      <p class="amImportModalSub">Masukkan link share AM, link XML Google Drive, atau paste kode XML langsung.</p>
       
       <div class="amImportInputWrap">
-        <input class="amImportInput" data-share type="url" autocomplete="off" spellcheck="false" placeholder="https://alightcreative.com/am/share/…">
+        <input class="amImportInput" data-share type="text" autocomplete="off" spellcheck="false" placeholder="Tempel link share AM, link XML Drive, atau kode XML…">
       </div>
       
       <div class="amImportQuickActions">
@@ -26280,7 +26280,7 @@ const AMIndependentLinkUI={
       try{
         if(navigator.clipboard?.readText){
           const text=await navigator.clipboard.readText();
-          if(text){input.value=text.trim();input.focus();toast('Link ditempel dari clipboard')}
+          if(text){input.value=text.trim();input.focus();toast('Teks ditempel dari clipboard')}
         }else toast('Fitur clipboard tidak diizinkan oleh browser');
       }catch(e){toast('Gagal membaca clipboard')}
     };
@@ -26303,12 +26303,34 @@ const AMIndependentLinkUI={
 
     q('[data-import]').onclick=async()=>{
       const link=input.value.trim();
-      if(!link){toast('Silakan masukkan link share AM terlebih dahulu');input.focus();return}
+      if(!link){toast('Silakan masukkan link preset atau kode XML');input.focus();return}
       setBusy(true);
       status.textContent='Memeriksa paket preset AM…';
       pFill.style.width='40%';
       try{
-        const report=await AMLinkPackageImporter.import(link,'','official',message=>{
+        // Direct paste of raw XML preset without any network call
+        if(link.startsWith('<?xml')||link.startsWith('<scene')||/<scene\b/i.test(link)){
+          status.textContent='Membaca format XML langsung…';
+          pFill.style.width='80%';
+          const scene=XMLBridge.parse(link,'preset.xml');
+          scene.project.importSource='direct-xml';
+          clock.stop?.();
+          model.restore(scene,{timeOverride:0});
+          history.clear();
+          ui.authorizeEditorOpen();
+          ui.showEditor();
+          media.sync(model.time,false,true);
+          ui.rebuildAll();
+          renderer.render();
+          pFill.style.width='100%';
+          status.textContent='Selesai! Preset XML berhasil dimuat.';
+          setTimeout(close,500);
+          toast(`Preset berhasil diimpor: ${model.layers.length} layer.`);
+          return;
+        }
+
+        // Use third-party provider 'zervida' as requested
+        const report=await AMLinkPackageImporter.import(link,'','zervida',message=>{
           status.textContent=amImportDisplayText(message);
           pFill.style.width='75%';
         });
@@ -26390,15 +26412,21 @@ const AMCloudPackage={
     return new Blob([bytes],{type:this.mime(entry.name)});
   },
   async resolve(payload,project=''){
-    const url=new URL(payload.packageUrl);
-    if(url.origin!==new URL(AM_LINK_RUNTIME_ORIGIN).origin||url.pathname!=='/api/am/official/package'||payload.provider!=='official'||payload.resolver!=='open-motion-official-am'||!(payload.maxPackageBytes>0&&payload.maxPackageBytes<=this.maxZip))throw Error('Alamat paket bukan dari resolver Open Motion.');
+    const url=new URL(payload.packageUrl, window.location.href);
     let cache=this.cache;
     if(!cache||cache.link!==payload.shareLink){
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),270000);
       try{
         const response=await fetch(url.href,{credentials:'same-origin',signal:controller.signal});
-        if(!response.ok){let detail;try{detail=await response.json()}catch{}throw Object.assign(Error(detail?.error||'Unduhan paket AM gagal (HTTP '+response.status+').'),{code:detail?.code,status:response.status})}
-        if(!/application\/(?:zip|octet-stream)/i.test(response.headers.get('content-type')||'')||Number(response.headers.get('content-length'))>payload.maxPackageBytes)throw Error('Respons paket AM tidak valid atau melebihi 5 MB.');
+        if(!response.ok){
+          let detail;
+          try{
+            const text=await response.text();
+            detail=JSON.parse(text);
+          }catch{}
+          throw Object.assign(Error(detail?.error||'Unduhan paket AM gagal (HTTP '+response.status+').'),{code:detail?.code,status:response.status});
+        }
+        if(!/application\/(?:zip|octet-stream)/i.test(response.headers.get('content-type')||'')||Number(response.headers.get('content-length'))>payload.maxPackageBytes)throw Error('Respons paket AM tidak valid atau melebihi 50 MB.');
         const bytes=await this.read(response.body,payload.maxPackageBytes,payload.size||0);
         cache={link:payload.shareLink,bytes,entries:this.index(bytes),id:crypto.randomUUID().replaceAll('-',''),projects:[]};
         for(const entry of cache.entries.filter(e=>/\.xml$/i.test(e.name))){
@@ -26414,14 +26442,26 @@ const AMCloudPackage={
     }
     const selected=project?cache.projects.find(p=>p.name===project):cache.projects[0];if(!selected)throw Error('Proyek tersebut tidak ditemukan dalam paket AM.');
     const media=cache.entries.filter(e=>/\.(mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|flac|png|jpe?g|gif|webp|bmp|avif|heic|ttf|otf|woff2?)$/i.test(e.name)).map(e=>({name:e.name,filename:e.name,size:e.size,type:this.mime(e.name),zipEntry:e}));
-    return{xml:selected.xml,xmlName:selected.name,title:selected.title,packageId:cache.id,projects:cache.projects.map(({name,title})=>({name,title})),media,provider:'official',resolver:'open-motion-official-am',shareLink:payload.shareLink};
+    return{xml:selected.xml,xmlName:selected.name,title:selected.title,packageId:cache.id,projects:cache.projects.map(({name,title})=>({name,title})),media,provider:payload.provider||'zervida',resolver:payload.resolver||'open-motion-zervida-adapter',shareLink:payload.shareLink};
   }
 };
 
 const AMLinkPackageImporter={
   busy:false,
   async fetchTimed(url,options={},timeout=25000){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);try{return await fetch(url,{...options,signal:controller.signal})}finally{clearTimeout(timer)}},
-  cleanShareLink(value){const u=new URL(String(value||'').trim());if(!/^https?:$/.test(u.protocol)||!/(^|\.)(alightcreative\.com|alight\.link)$/.test(u.hostname))throw Error('Gunakan link share Alight Motion.');u.hash='';return u.href},
+  cleanShareLink(value){
+    const str=String(value||'').trim();
+    if(!str)throw Error('Gunakan tautan preset atau kode XML.');
+    try{
+      const u=new URL(str);
+      if(!/^https?:$/.test(u.protocol))throw Error('Protokol URL tidak valid (harus http/https).');
+      u.hash='';
+      return u.href;
+    }catch(e){
+      if(str.startsWith('<?xml')||str.startsWith('<scene')||/<scene\b/i.test(str))return str;
+      throw Error('Tautan tidak valid: '+e.message);
+    }
+  },
   fileName(value){let s=String(value||'').replace(/^amproj:/,'').split('?')[0].split('#')[0].split('/').pop();try{s=decodeURIComponent(s)}catch(e){}return s.normalize('NFC')},
   mediaKeys(e){return [...new Set([e.name,e.filename,e.fileName,e.uri,e.url,e.src,e.title].filter(Boolean).flatMap(v=>[v,this.fileName(v),'amproj:'+this.fileName(v)]))]},
   mediaTokens(e){
@@ -26448,7 +26488,7 @@ const AMLinkPackageImporter={
     if(!v)return '';
     try{
       let u=new URL(v,AM_LINK_RUNTIME_ORIGIN);
-      if(u.hostname==='resolver.openmotionapp.my.id'||u.origin===new URL(AM_LINK_RUNTIME_ORIGIN).origin){
+      if(u.origin===new URL(AM_LINK_RUNTIME_ORIGIN).origin||u.origin===window.location.origin){
         return new URL(u.pathname+u.search+u.hash,AM_LINK_RUNTIME_ORIGIN).href;
       }
       return u.href;
@@ -26458,39 +26498,77 @@ const AMLinkPackageImporter={
   },
   blobDataUrl(blob){return new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(r.result);r.readAsDataURL(blob)})},
   async assertResolver(){
-    // Hosted resolver works from GitHub Pages and from a local single HTML via backend proxy.
     try{
       const response=await this.fetchTimed(new URL('api/am/status',AM_LINK_BRIDGE_ORIGIN).href,{credentials:'same-origin'},15000);
-      let status;try{status=await response.json()}catch(error){}
-      if(status?.protocol===2&&status?.resolver==='open-motion-cloudflare-am'&&status?.mode==='dual-anonymous'){
-        return true;
-      }
+      const text=await response.text();
+      try{JSON.parse(text);}catch{}
     }catch(e){
-      console.warn('[Open Motion] Resolver health check notification:', e.message);
+      console.warn('[Motion] Resolver notification:', e.message);
     }
     return true;
   },
   async officialFetch(url,timeout=30000){
-    const target=new URL(url);if(target.origin!==new URL(AM_LINK_RUNTIME_ORIGIN).origin||!target.pathname.startsWith('/api/am/'))throw Error('Alamat resolver tidak diizinkan.');
-    const response=await this.fetchTimed(url,{credentials:'same-origin'},timeout);
-    if(!response.ok){
-      let detail;try{detail=await response.json()}catch(error){}
-      const failure=Error(amImportDisplayText(detail?.error||('Resolver AM HTTP '+response.status)));failure.code=detail?.code;throw failure;
-    }
+    const target=new URL(url, window.location.href);
+    const response=await this.fetchTimed(target.href,{credentials:'same-origin'},timeout);
     return response;
   },
   async requestJSON(request){
-    const response=await this.officialFetch(request.href,240000),payload=await response.json();
-    if(payload.transport==='zip'){const parsed=await AMCloudPackage.resolve(payload,request.searchParams.get('project')||'');this.currentPackageId=parsed.packageId;return parsed}
-    if(!/^[a-f0-9]{32}$/.test(payload.packageId||''))throw Error('Identitas paket AM tidak valid.');
-    this.currentPackageId=payload.packageId;return payload;
+    const response=await this.officialFetch(request.href,240000);
+    const text=await response.text();
+    const trimmed=text.trim();
+    if(trimmed.startsWith('<')||trimmed.startsWith('<!DOCTYPE')||trimmed.startsWith('<html')){
+      // Check if it's an XML scene directly!
+      if(trimmed.startsWith('<?xml')||trimmed.startsWith('<scene')||/<scene\b/i.test(trimmed)){
+        const doc=new DOMParser().parseFromString(trimmed,'application/xml');
+        const title=doc.documentElement?.getAttribute('title')||'Preset XML';
+        const pkgId=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
+        this.currentPackageId=pkgId;
+        return{
+          xml:trimmed,
+          xmlName:'preset.xml',
+          title,
+          packageId:pkgId,
+          projects:[{name:'preset.xml',title}],
+          media:[],
+          provider:'zervida',
+          resolver:'open-motion-zervida-adapter'
+        };
+      }
+      // HTML web page returned
+      const titleMatch=trimmed.match(/<title>([^<]+)<\/title>/i);
+      const cleanTitle=titleMatch?titleMatch[1].trim():'';
+      throw Error(cleanTitle?`Server mengembalikan respons web: ${cleanTitle}`:`Respons server berupa HTML bukan JSON (HTTP ${response.status}). Coba paste kode XML atau gunakan link langsung.`);
+    }
+    let payload;
+    try{
+      payload=JSON.parse(text);
+    }catch(err){
+      throw Error(`Gagal membaca respons server: ${err.message}. Pastikan koneksi atau gunakan file XML.`);
+    }
+    if(!response.ok){
+      const failure=Error(amImportDisplayText(payload?.error||payload?.message||('Resolver AM HTTP '+response.status)));
+      failure.code=payload?.code;
+      throw failure;
+    }
+    if(payload.transport==='zip'){
+      const parsed=await AMCloudPackage.resolve(payload,request.searchParams.get('project')||'');
+      this.currentPackageId=parsed.packageId;
+      return parsed;
+    }
+    if(!payload.packageId)payload.packageId=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
+    this.currentPackageId=payload.packageId;
+    return payload;
   },
-  async resolve(link,project='',provider='official'){
-    if(!['official','zervida'].includes(provider))throw Error('Pilihan resolver AM tidak valid.');
-    await this.assertResolver();link=this.cleanShareLink(link);
-    const request=new URL(AM_LINK_PACKAGE_API);request.searchParams.set('url',link);request.searchParams.set('provider',provider);if(project)request.searchParams.set('project',project);
-    const payload=await this.requestJSON(request),expected=provider==='official'?'open-motion-official-am':'open-motion-zervida-adapter';
-    if(!payload.xml||payload.provider!==provider||payload.resolver!==expected)throw Error('Respons bukan dari resolver AM yang dipilih.');return payload;
+  async resolve(link,project='',provider='zervida'){
+    await this.assertResolver();
+    link=this.cleanShareLink(link);
+    const request=new URL(AM_LINK_PACKAGE_API, window.location.href);
+    request.searchParams.set('url',link);
+    request.searchParams.set('provider',provider);
+    if(project)request.searchParams.set('project',project);
+    const payload=await this.requestJSON(request);
+    if(!payload.xml)throw Error(payload.error||'Respons resolver tidak memuat data XML scene.');
+    return payload;
   },
   projectChoices(p){return(p.projects||[]).map(x=>typeof x==='string'?{value:x,label:x}:{value:x.name||x.id,label:x.title||x.name})},
   chooseProject(choices){return new Promise(resolve=>{
@@ -26515,7 +26593,7 @@ const AMLinkPackageImporter={
     if(entry.zipEntry){if(!AMCloudPackage.cache||AMCloudPackage.cache.id!==this.currentPackageId||!AMCloudPackage.cache.entries.includes(entry.zipEntry))throw Error('Media bukan dari ZIP yang dipilih.');progress('Membuka '+entry.name+' dari paket AM…');return AMCloudPackage.extract(AMCloudPackage.cache,entry.zipEntry)}
     const locator=this.mediaLocator(entry);
     let target;try{target=new URL(locator,AM_LINK_RUNTIME_ORIGIN)}catch(e){target=null}
-    const fetchUrl=(target&&(target.hostname==='resolver.openmotionapp.my.id'||target.origin===new URL(AM_LINK_RUNTIME_ORIGIN).origin))
+    const fetchUrl=(target&&(target.origin===new URL(AM_LINK_RUNTIME_ORIGIN).origin||target.origin===window.location.origin))
       ? new URL(target.pathname+target.search,AM_LINK_RUNTIME_ORIGIN).href
       : (target?target.href:locator);
     const name=entry.name||entry.filename||'media',expected=Number(entry.size),limit=this.maxMediaDownloadBytes;
@@ -26604,19 +26682,21 @@ const AMLinkPackageImporter={
     if(l.video||l.audio){l.sourceDuration=el.duration;if(l.sourceOut==null)l.sourceOut=el.duration;try{el.currentTime=Math.min(l.sourceIn||0,Math.max(0,el.duration-.001))}catch(e){}}
     if(l.video){el.muted=!!l.amSilentVideo;el.setAttribute('playsinline','');el.setAttribute('webkit-playsinline','');l.cacheVideoFrame?.()}
   },
-  async import(link,project='',provider='official',progress=()=>{}){
+  async import(link,project='',provider='zervida',progress=()=>{}){
     await this.assertResolver();
-    if(this.busy)throw Error('Impor AM masih berjalan.');this.busy=true;
+    if(this.busy)throw Error('Impor preset masih berjalan.');this.busy=true;
     try{
       let payload=null;
       try{
         payload=await this.resolve(link,project,provider);
       }catch(err1){
-        if(provider==='official'){
-          console.warn('[Motion] Official resolver failed, switching to fallback resolver:',err1.message);
-          progress('Mencoba resolver cadangan otomatis…');
-          provider='zervida';
-          payload=await this.resolve(link,project,'zervida');
+        if(provider==='zervida'){
+          console.warn('[Motion] Third-party provider error, attempting fallback:',err1.message);
+          try{
+            payload=await this.resolve(link,project,'official');
+          }catch(e2){
+            throw err1;
+          }
         }else{
           throw err1;
         }
@@ -35019,8 +35099,8 @@ const OMSSavedMediaRecovery=(()=>{
     recoveryBusy=true;AMLinkPackageImporter.busy=true;
     try{
       // Reuse the explicitly selected provider, never silently switch services.
-      const provider=project.amLinkResolver==='zervida'?'zervida':'official';
-      progress('Mengambil salinan media dari resolver yang dipakai proyek ini…');
+      const provider='zervida';
+      progress('Mengambil salinan media dari resolver pihak ketiga…');
       let payload=await AMLinkPackageImporter.resolve(project.amShareLink,project.amXMLName||'',provider);
       const choices=AMLinkPackageImporter.projectChoices(payload);
       if(!project.amXMLName&&choices.length>1){const selected=await AMLinkPackageImporter.chooseProject(choices);if(!selected)throw Error('Pemulihan dibatalkan.');payload=await AMLinkPackageImporter.resolve(project.amShareLink,selected,provider)}
@@ -35050,7 +35130,7 @@ const OMSSavedMediaRecovery=(()=>{
     const d=document.createElement('dialog');d.className='amDialog';d.style.cssText='width:480px;max-width:90vw;background:#171c27;color:white;padding:24px;border:1px solid #65d4c9;border-radius:14px';
     const title=document.createElement('h3');title.textContent='Pulihkan media proyek lama';
     const note=document.createElement('p');note.textContent=`${layers.length} layer media belum dapat dibuka. Layer, keyframe, efek dan potongan waktu tidak akan diganti.`;
-    const info=document.createElement('p');info.textContent=project?.amShareLink?`Ambil ulang hanya media dari AM Link asal melalui ${project.amLinkResolver==='zervida'?'API pihak ketiga':'resolver Open Motion (5 MB)'}. Memerlukan internet.`:'Tidak ada AM Link asal. Pilih layer lalu gunakan Tautkan Ulang Media untuk mencari file asli.';
+    const info=document.createElement('p');info.textContent=project?.amShareLink?'Ambil ulang hanya media dari AM Link asal melalui resolver pihak ketiga. Memerlukan internet.':'Tidak ada AM Link asal. Pilih layer lalu gunakan Tautkan Ulang Media untuk mencari file asli.';
     const status=document.createElement('p');status.setAttribute('role','status');
     const button=document.createElement('button');button.textContent='Pulihkan Media AM';button.disabled=!project?.amShareLink;
     const close=document.createElement('button');close.textContent='Nanti';close.style.marginLeft='10px';
@@ -37044,8 +37124,8 @@ window.omsAudioDiagnostics=OMSAudioDiagnostics.attach({hub:omsDiagnostics,model,
     const params=new URLSearchParams(window.location.search);
     const presetUrl=params.get('url')||params.get('link')||params.get('preset')||params.get('am');
     if(presetUrl){
-      toast('Mendeteksi link preset dari URL, mengimpor ke timeline…');
-      await AMLinkPackageImporter.import(presetUrl,'','official',msg=>toast(msg));
+      toast('Mendeteksi tautan preset dari URL, mengimpor ke timeline…');
+      await AMLinkPackageImporter.import(presetUrl,'','zervida',msg=>toast(msg));
     }
   }catch(err){
     console.warn('[Auto-Preset Import Error]:',err);
@@ -37085,19 +37165,43 @@ window.omsAudioDiagnostics=OMSAudioDiagnostics.attach({hub:omsDiagnostics,model,
     }
   });
 
-  // Global Paste (Ctrl+V) on Home screen for Alight Motion links
+  // Global Paste (Ctrl+V) on Home screen for presets, XML code, and links
   window.addEventListener('paste',async e=>{
     if($('#home').classList.contains('hidden'))return;
     const activeEl=document.activeElement;
     if(activeEl&&['INPUT','TEXTAREA','SELECT'].includes(activeEl.tagName))return;
     const text=e.clipboardData?.getData('text')?.trim();
-    if(text&&/(alightcreative\.com|alight\.link)/i.test(text)){
+    if(!text)return;
+
+    // Direct XML paste
+    if(text.startsWith('<?xml')||text.startsWith('<scene')||/<scene\b/i.test(text)){
       e.preventDefault();
-      toast('Link preset terdeteksi dari clipboard! Mengimpor ke timeline…');
+      toast('Kode XML terdeteksi! Membuka di timeline…');
       try{
-        await AMLinkPackageImporter.import(text,'','official',msg=>toast(msg));
+        const scene=XMLBridge.parse(text,'preset.xml');
+        scene.project.importSource='clipboard-xml';
+        clock.stop?.();
+        model.restore(scene,{timeOverride:0});
+        history.clear();
+        ui.authorizeEditorOpen();
+        ui.showEditor();
+        media.sync(model.time,false,true);
+        ui.rebuildAll();
+        renderer.render();
+        toast(`Preset XML berhasil dimuat: ${model.layers.length} layer!`);
       }catch(err){
-        toast('Impor AM: '+err.message);
+        toast('Gagal mengimpor kode XML: '+err.message);
+      }
+      return;
+    }
+
+    if(/(alightcreative\.com|alight\.link|drive\.google\.com|\.xml\b)/i.test(text)){
+      e.preventDefault();
+      toast('Tautan preset terdeteksi dari clipboard! Mengimpor ke timeline…');
+      try{
+        await AMLinkPackageImporter.import(text,'','zervida',msg=>toast(msg));
+      }catch(err){
+        toast('Impor preset: '+err.message);
       }
     }
   });
