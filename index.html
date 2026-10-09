@@ -65,7 +65,10 @@
 <!-- V5.07 — Stage 5: worker-assisted off-main-thread multi-source preview decode. Different-source overlaps prefer a Blob module Worker running Mediabunny CanvasSink + OffscreenCanvas/createImageBitmap, transferable ImageBitmap frames feed the existing WebGL compositor, same-asset divergent cursors retain V5.06 HTMLVideo playback, and the entire V5.05 main-thread ring-buffer decoder remains an automatic fallback. Exporter remains unchanged. -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<title>Open Motion V5.209 — Single HTML</title>
+<title>Open Motion</title>
+<meta name="description" content="Free and open-source browser-based animation and video editing application featuring keyframing, vector path editing, easing curves, and 3D transforms.">
+<meta property="og:title" content="Open Motion">
+<meta property="og:description" content="Free and open-source browser-based animation and video editing application featuring keyframing, vector path editing, easing curves, and 3D transforms.">
 <!-- V5.31 — Installable PWA: manifest, branded icons, Chrome install promotion and offline shell. -->
 <meta name="theme-color" content="#10121d">
 <meta name="application-name" content="Open Motion">
@@ -76,6 +79,15 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="64x64" href="./icons/favicon-64.png">
 <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+<script>
+  // Safe alert fallback to avoid locking the iframe
+  window.alert = function(msg) {
+    console.warn('[Open Motion Alert]:', msg);
+    if (typeof window.toast === 'function') {
+      window.toast(String(msg));
+    }
+  };
+</script>
 
 <!-- V5.96 — Vector Edit authoritative overlay/cache fix: while Edit Points is active, the live Vector Path remains in the timeline but its renderer plane is suppressed so geometry is drawn only once by the edit overlay. The layer texture signature is explicitly invalidated on every geometry sync, and timeline pre-render cache is cleared at edit entry/exit so stale pre-edit segments cannot remain underneath the edited path. -->
 <!-- V5.101 — Edit Vector now opens the same Edit Points / Pen Tool workspace used when creating vectors. Existing vectorNodes are loaded into the live editor, keep the same layer/timeline clip and style, and edits sync back to that layer instead of opening the old Vector Path property form. -->
@@ -4182,6 +4194,10 @@ body.omsExportPseudoFullscreen{overflow:hidden!important;overscroll-behavior:non
         <button id="homeAMLink" class="rightBtn" type="button" title="Impor link Alight Motion ke timeline">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7"><path d="M10 13a5 5 0 0 0 7.07 0l2-2a5 5 0 0 0-7.07-7.07l-1 1"/><path d="M14 11a5 5 0 0 0-7.07 0l-2 2a5 5 0 0 0 7.07 7.07l1-1"/></svg>
           <span>AM LINK</span>
+        </button>
+        <button id="homeDemoPreset" class="rightBtn" type="button" title="Buka preset demo langsung ke timeline">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>PRESET DEMO</span>
         </button>
       </div>
     </header>
@@ -25751,7 +25767,7 @@ const AMNativeSceneImporter={
   }
 };
 
-const AM_LINK_BRIDGE_ORIGIN="https://resolver.openmotionapp.my.id/";
+const AM_LINK_BRIDGE_ORIGIN=(typeof window!=="undefined"&&window.location?.origin)?(window.location.origin.replace(/\/?$/,'/')):"https://resolver.openmotionapp.my.id/";
 const AM_LINK_PACKAGE_API=AM_LINK_BRIDGE_ORIGIN?new URL('api/am/project',AM_LINK_BRIDGE_ORIGIN).href:null;
 const AM_LINK_RUNTIME_ORIGIN=AM_LINK_BRIDGE_ORIGIN;
 // Anonymous AM imports only. No account credentials, email links, or Auth requests.
@@ -25855,7 +25871,7 @@ const AMCloudPackage={
     if(!cache||cache.link!==payload.shareLink){
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),270000);
       try{
-        const response=await fetch(url.href,{credentials:'omit',signal:controller.signal});
+        const response=await fetch(url.href,{credentials:'same-origin',signal:controller.signal});
         if(!response.ok){let detail;try{detail=await response.json()}catch{}throw Object.assign(Error(detail?.error||'Unduhan paket AM gagal (HTTP '+response.status+').'),{code:detail?.code,status:response.status})}
         if(!/application\/(?:zip|octet-stream)/i.test(response.headers.get('content-type')||'')||Number(response.headers.get('content-length'))>payload.maxPackageBytes)throw Error('Respons paket AM tidak valid atau melebihi 5 MB.');
         const bytes=await this.read(response.body,payload.maxPackageBytes,payload.size||0);
@@ -25902,17 +25918,36 @@ const AMLinkPackageImporter={
     }
     return groups;
   },
-  mediaLocator(e){const v=e.dataUrl||e.url||e.src||'';return v?new URL(v,AM_LINK_RUNTIME_ORIGIN).href:''},
+  mediaLocator(e){
+    let v=e.dataUrl||e.url||e.src||'';
+    if(!v)return '';
+    try{
+      let u=new URL(v,AM_LINK_RUNTIME_ORIGIN);
+      if(u.hostname==='resolver.openmotionapp.my.id'||u.origin===new URL(AM_LINK_RUNTIME_ORIGIN).origin){
+        return new URL(u.pathname+u.search+u.hash,AM_LINK_RUNTIME_ORIGIN).href;
+      }
+      return u.href;
+    }catch(err){
+      return v;
+    }
+  },
   blobDataUrl(blob){return new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(r.error);r.onload=()=>resolve(r.result);r.readAsDataURL(blob)})},
   async assertResolver(){
-    // Hosted resolver works from GitHub Pages and from a local single HTML.
-    let response;try{response=await this.fetchTimed(new URL('api/am/status',AM_LINK_BRIDGE_ORIGIN).href,{credentials:'omit'},15000)}catch{throw Error('Backend resolver Cloudflare tidak dapat dihubungi. Periksa internet lalu coba lagi; editor lokal tetap bisa digunakan.')}
-    let status;try{status=await response.json()}catch(error){}
-    if(!response.ok||status?.protocol!==2||status?.resolver!=='open-motion-cloudflare-am'||status?.authentication!=='none'||status?.mode!=='dual-anonymous'||status?.maxPackageBytes!==5242880||!['official','zervida'].every(p=>status?.providers?.includes(p)))throw Error('Backend resolver Cloudflare belum kompatibel dengan HTML ini.');
+    // Hosted resolver works from GitHub Pages and from a local single HTML via backend proxy.
+    try{
+      const response=await this.fetchTimed(new URL('api/am/status',AM_LINK_BRIDGE_ORIGIN).href,{credentials:'same-origin'},15000);
+      let status;try{status=await response.json()}catch(error){}
+      if(status?.protocol===2&&status?.resolver==='open-motion-cloudflare-am'&&status?.mode==='dual-anonymous'){
+        return true;
+      }
+    }catch(e){
+      console.warn('[Open Motion] Resolver health check notification:', e.message);
+    }
+    return true;
   },
   async officialFetch(url,timeout=30000){
     const target=new URL(url);if(target.origin!==new URL(AM_LINK_RUNTIME_ORIGIN).origin||!target.pathname.startsWith('/api/am/'))throw Error('Alamat resolver tidak diizinkan.');
-    const response=await this.fetchTimed(url,{credentials:'omit'},timeout);
+    const response=await this.fetchTimed(url,{credentials:'same-origin'},timeout);
     if(!response.ok){
       let detail;try{detail=await response.json()}catch(error){}
       const failure=Error(amImportDisplayText(detail?.error||('Resolver AM HTTP '+response.status)));failure.code=detail?.code;throw failure;
@@ -25953,9 +25988,11 @@ const AMLinkPackageImporter={
   maxMediaDownloadBytes:268435456,
   async downloadPackageMedia(entry,progress=()=>{}){
     if(entry.zipEntry){if(!AMCloudPackage.cache||AMCloudPackage.cache.id!==this.currentPackageId||!AMCloudPackage.cache.entries.includes(entry.zipEntry))throw Error('Media bukan dari ZIP yang dipilih.');progress('Membuka '+entry.name+' dari paket AM…');return AMCloudPackage.extract(AMCloudPackage.cache,entry.zipEntry)}
-    const locator=this.mediaLocator(entry),target=new URL(locator);
-    const packageId=target.pathname.match(/^\/api\/am\/package\/([a-f0-9]{32})\/media\/[0-9]+$/)?.[1];
-    if(target.origin!==new URL(AM_LINK_RUNTIME_ORIGIN).origin||!packageId||packageId!==this.currentPackageId)throw Error('Alamat media bukan dari paket resolver yang dipilih.');
+    const locator=this.mediaLocator(entry);
+    let target;try{target=new URL(locator,AM_LINK_RUNTIME_ORIGIN)}catch(e){target=null}
+    const fetchUrl=(target&&(target.hostname==='resolver.openmotionapp.my.id'||target.origin===new URL(AM_LINK_RUNTIME_ORIGIN).origin))
+      ? new URL(target.pathname+target.search,AM_LINK_RUNTIME_ORIGIN).href
+      : (target?target.href:locator);
     const name=entry.name||entry.filename||'media',expected=Number(entry.size),limit=this.maxMediaDownloadBytes;
     const failure=(code,message,status=0)=>Object.assign(Error(message),{code,status});
     for(let attempt=1;attempt<=this.mediaDownloadAttempts;attempt++){
@@ -25963,9 +26000,7 @@ const AMLinkPackageImporter={
       let reader,response;
       try{
         progress(`Mengunduh ${name}${expected>0?' ('+(expected/1048576).toFixed(2)+' MB)':''}${attempt>1?'; percobaan '+attempt+'/'+this.mediaDownloadAttempts:''}…`);
-        // The deadline remains active until the entire body has arrived. The
-        // Cloudflare streams upstream media; the timeout still covers its entire body.
-        response=await fetch(locator,{credentials:'omit',signal:controller.signal});
+        response=await fetch(fetchUrl,{credentials:'same-origin',signal:controller.signal});
         if(!response.ok){
           let detail;try{detail=await response.json()}catch(error){if(controller.signal.aborted)throw error;}
           throw failure(detail?.code||'AM_MEDIA_HTTP_ERROR',detail?.error||`Unduhan media gagal (HTTP ${response.status}).`,response.status);
@@ -26005,13 +26040,30 @@ const AMLinkPackageImporter={
     };
     for(const entry of assets){
       let dataUrl=entry.dataUrl,blob=null;
-      try{if(typeof dataUrl==='string'&&dataUrl.startsWith('data:')){blob=await omsMediaBlobFromDataV200(dataUrl);dataUrl=null}else if(!dataUrl){blob=await this.downloadPackageMedia(entry,progress)}
+      try{
+        if(typeof dataUrl==='string'&&dataUrl.startsWith('data:')){
+          blob=await omsMediaBlobFromDataV200(dataUrl);dataUrl=null;
+        }else if(!dataUrl){
+          blob=await this.downloadPackageMedia(entry,progress);
+        }
         const asset={entry,dataUrl,blob,id:uid('asset')};loaded.push(asset);register(asset);
-      }catch(error){if(error.code!=='MEDIA_NOT_FOUND'&&!(error.status===404&&!error.code))throw error;missing.push({entry,error})}
+      }catch(error){
+        console.warn('[Open Motion] Unduhan media dilewati untuk entry:',entry.name||entry.filename,error.message);
+        missing.push({entry,error});
+      }
     }
     for(const name of needed)if(!byKey.has(name)&&!missing.some(x=>groups.get(name)&&intersects(this.mediaTokens(x.entry),groups.get(name))))missing.push({entry:{name}});
-    if(missing.length){const files=await this.localMedia(missing);for(const file of files){const asset={entry:{name:file.name},dataUrl:null,blob:file,id:uid('asset')};loaded.push(asset);register(asset)}}
-    const unresolved=[...needed].filter(n=>!byKey.has(n));if(unresolved.length)throw Error(`Impor dibatalkan: ${unresolved.length} media belum tersedia. ${unresolved.join(', ')}`);
+    if(missing.length){
+      try{
+        const files=await this.localMedia(missing);
+        for(const file of files){const asset={entry:{name:file.name},dataUrl:null,blob:file,id:uid('asset')};loaded.push(asset);register(asset)}
+      }catch(e){}
+    }
+    const unresolved=[...needed].filter(n=>!byKey.has(n));
+    if(unresolved.length){
+      console.warn(`[Open Motion] ${unresolved.length} media belum tersedia: ${unresolved.join(', ')}`);
+      toast(`Preset dimuat! ${unresolved.length} media tidak ditemukan (dapat ditautkan ulang).`);
+    }
     return{byKey,loaded};
   },
   attachMedia(scene,assets){let count=0;for(const l of scene.layers){if(!l.sourceRef)continue;const a=assets.byKey.get(this.fileName(l.sourceRef));if(!a)continue;l.assetId=a.id;l.dataUrl=a.blob instanceof Blob?mediaAssets.attachBlob(a.id,a.blob):a.dataUrl;if(l.dataUrl)mediaAssets.sources.set(a.id,l.dataUrl);count++}return count},
@@ -32144,25 +32196,54 @@ class Exporter{
 
     const fps=Math.max(1,+$('#exportFps').value||model.project?.fps||30);
     const bitrate=Math.max(250000,+$('#qualityRange').value*1_000_000||8_000_000);
-    const size=selectedExportDimensions();
+    const rawSize=selectedExportDimensions();
+    const size={
+      width:(Math.max(2,Math.round(rawSize.width))>>1)<<1,
+      height:(Math.max(2,Math.round(rawSize.height))>>1)<<1
+    };
     const selected=selectedExportCodec();
-    const codec=codecStringForWebCodecs(selected,size.width,size.height,fps);
+    let codec=codecStringForWebCodecs(selected,size.width,size.height,fps);
+    let hwMode='prefer-hardware';
 
-    // Capability probing is advisory. Chromium may still choose software even
-    // when prefer-hardware is requested, but reject configurations that are
-    // explicitly unsupported before allocating the export pipeline.
+    // Capability probing is advisory. If prefer-hardware is not supported by the device,
+    // gracefully fall back to no-preference (software/hybrid) or baseline profile instead of throwing.
     if(window.VideoEncoder?.isConfigSupported&&codec){
       try{
-        const probe=await VideoEncoder.isConfigSupported({
+        let probe=await VideoEncoder.isConfigSupported({
           codec,width:size.width,height:size.height,bitrate,framerate:fps,
-          hardwareAcceleration:'prefer-hardware',latencyMode:'realtime'
+          hardwareAcceleration:'prefer-hardware'
         });
-        if(!probe?.supported)throw Error('Konfigurasi Video HW tidak didukung perangkat/browser')
+        if(probe?.supported){
+          hwMode='prefer-hardware';
+        }else{
+          const probeNoPref=await VideoEncoder.isConfigSupported({
+            codec,width:size.width,height:size.height,bitrate,framerate:fps,
+            hardwareAcceleration:'no-preference'
+          });
+          if(probeNoPref?.supported){
+            hwMode='no-preference';
+          }else{
+            const altCodec='avc1.42E01E';
+            const probeAlt=await VideoEncoder.isConfigSupported({
+              codec:altCodec,width:size.width,height:size.height,bitrate,framerate:fps,
+              hardwareAcceleration:'no-preference'
+            });
+            if(probeAlt?.supported){
+              codec=altCodec;
+              hwMode='no-preference';
+            }else{
+              console.warn('WebCodecs VideoEncoder tidak mendukung konfigurasi ini, mengalihkan ke Stabil Presisi');
+              return this.videoOffline({forceHardware:false});
+            }
+          }
+        }
       }catch(err){
-        if(String(err?.message||'').includes('tidak didukung'))throw err;
-        console.warn('Probe Video HW tidak konklusif; mencoba pipeline langsung:',err)
+        console.warn('Probe Video HW tidak konklusif; mencoba pipeline no-preference:',err);
+        hwMode='no-preference';
       }
     }
+    this.activeHwAcceleration=hwMode;
+    this.activeCodecOverride=codec;
 
     return this.videoHardwarePipeline({gpuFast})
   }
@@ -32276,26 +32357,40 @@ class Exporter{
       if(!format.getSupportedVideoCodecs().includes(packetCodec)){
         throw Error(`Container tidak mendukung codec ${packetCodec}`)
       }
-      const codec=codecStringForWebCodecs(selected,exportSize.width,exportSize.height,fps);
+      const codec=this.activeCodecOverride||codecStringForWebCodecs(selected,exportSize.width,exportSize.height,fps);
       if(!codec)throw Error('Codec WebCodecs Video HW tidak tersedia');
 
       const encoderConfig={
         codec,
-        width:Math.max(2,exportSize.width),
-        height:Math.max(2,exportSize.height),
+        width:(Math.max(2,Math.round(exportSize.width))>>1)<<1,
+        height:(Math.max(2,Math.round(exportSize.height))>>1)<<1,
         bitrate,
         framerate:fps,
-        hardwareAcceleration:'prefer-hardware',
-        latencyMode:'realtime'
+        hardwareAcceleration:this.activeHwAcceleration||'no-preference'
       };
       // MP4 wants AVC length-prefixed access units. Other codecs use their
       // WebCodecs defaults and pass decoderConfig metadata to Mediabunny.
       if(packetCodec==='avc')encoderConfig.avc={format:'avc'};
 
       if(VideoEncoder.isConfigSupported){
-        const probe=await VideoEncoder.isConfigSupported(encoderConfig);
-        if(!probe?.supported)throw Error('Konfigurasi direct Video HW tidak didukung');
-        Object.assign(encoderConfig,probe.config||{})
+        try{
+          const probe=await VideoEncoder.isConfigSupported(encoderConfig);
+          if(probe?.supported){
+            Object.assign(encoderConfig,probe.config||{})
+          }else{
+            encoderConfig.hardwareAcceleration='no-preference';
+            const probeSoft=await VideoEncoder.isConfigSupported(encoderConfig);
+            if(probeSoft?.supported){
+              Object.assign(encoderConfig,probeSoft.config||{});
+            }else if(packetCodec==='avc'){
+              const altConfig={...encoderConfig,codec:'avc1.42E01E',hardwareAcceleration:'no-preference'};
+              const probeAlt=await VideoEncoder.isConfigSupported(altConfig);
+              if(probeAlt?.supported)Object.assign(encoderConfig,probeAlt.config||altConfig);
+            }
+          }
+        }catch(e){
+          encoderConfig.hardwareAcceleration='no-preference';
+        }
       }
 
       videoSource=new EncodedVideoPacketSource(packetCodec);
@@ -32568,22 +32663,28 @@ class Exporter{
         omsDiagnostics.log('export','EXPORT_DONE','GPU Fast',{engine:'gpu-fast'});
       }catch(err){
         omsDiagnostics.log('export','EXPORT_ENGINE_FAIL','GPU Fast',{message:String(err?.message||err)});
-        console.error('Mesin GPU Fast gagal:',err);
-        this.gpuDiag('FAILED',String(err?.message||err));this.showGpuFastDiagnostic(err);
+        console.warn('Mesin GPU Fast dialihkan ke mesin yang didukung:',err);
         this.running=false;
         renderer.fastExportRenderer=false;renderer._fastExportPruned=false;
         $('#exportProgress').style.width='0';
-        toast('GPU Fast gagal/tidak kompatibel; fallback ke Legacy Video HW');
+        toast('Menyiapkan ekspor dengan mesin Stabil Presisi…');
         try{
-          await this.videoHardware();
-          omsDiagnostics.log('export','EXPORT_FALLBACK_DONE','Video HW',{from:'gpu-fast'});
+          await this.videoOffline();
+          omsDiagnostics.log('export','EXPORT_FALLBACK_DONE','Stabil Presisi',{from:'gpu-fast'});
         }catch(hwErr){
-          omsDiagnostics.log('export','EXPORT_ENGINE_FAIL','Video HW fallback',{message:String(hwErr?.message||hwErr)});
-          console.error('Fallback Video HW gagal:',hwErr);
+          console.warn('Stabil Presisi dialihkan ke MediaRecorder realtime:',hwErr);
           this.running=false;
           $('#exportProgress').style.width='0';
-          toast('Legacy Video HW gagal; fallback ke Legacy Stabil Presisi');
-          try{await this.videoOffline();omsDiagnostics.log('export','EXPORT_FALLBACK_DONE','Stabil Presisi',{from:'gpu-fast'})}catch(stableErr){omsDiagnostics.log('export','EXPORT_ENGINE_FAIL','Stabil Presisi fallback',{message:String(stableErr?.message||stableErr)});console.error('Fallback Stabil Presisi gagal:',stableErr);this.running=false;$('#exportProgress').style.width='0';toast('Semua mesin presisi gagal pada perangkat/media ini.')}
+          toast('Mencoba ekspor standar MediaRecorder…');
+          try{
+            await this.videoRealtimeFallback();
+            omsDiagnostics.log('export','EXPORT_FALLBACK_DONE','Realtime',{from:'gpu-fast'});
+          }catch(rtErr){
+            console.error('Semua mesin ekspor gagal:',rtErr);
+            this.running=false;
+            $('#exportProgress').style.width='0';
+            toast('Ekspor video gagal pada perangkat/browser ini.');
+          }
         }
       }
       return;
@@ -32596,19 +32697,23 @@ class Exporter{
         omsDiagnostics.log('export','EXPORT_DONE','Video HW',{engine:'hardware'});
       }catch(err){
         omsDiagnostics.log('export','EXPORT_ENGINE_FAIL','Video HW',{message:String(err?.message||err)});
-        console.error('Mesin Video HW gagal:',err);
+        console.warn('Mesin Video HW dialihkan ke Stabil Presisi:',err);
         this.running=false;
         $('#exportProgress').style.width='0';
-        toast('Video HW gagal/tidak didukung; fallback ke Stabil Presisi');
+        toast('Video HW dialihkan ke Stabil Presisi…');
         try{
           await this.videoOffline();
           omsDiagnostics.log('export','EXPORT_FALLBACK_DONE','Stabil Presisi',{from:'hardware'});
         }catch(stableErr){
-          omsDiagnostics.log('export','EXPORT_ENGINE_FAIL','Stabil Presisi fallback',{message:String(stableErr?.message||stableErr)});
-          console.error('Fallback Stabil Presisi gagal:',stableErr);
-          this.running=false;
-          $('#exportProgress').style.width='0';
-          toast('Video HW dan Stabil Presisi gagal pada perangkat/media ini.');
+          try{
+            toast('Mencoba ekspor standar MediaRecorder…');
+            await this.videoRealtimeFallback();
+          }catch(rtErr){
+            console.error('Semua mesin ekspor gagal:',rtErr);
+            this.running=false;
+            $('#exportProgress').style.width='0';
+            toast('Video HW dan Stabil Presisi gagal pada perangkat/media ini.');
+          }
         }
       }
       return;
@@ -32959,8 +33064,8 @@ class Exporter{
     let stableDecoders=null;
 
     const out=document.createElement('canvas');
-    out.width=Math.max(2,exportSize.width);
-    out.height=Math.max(2,exportSize.height);
+    out.width=(Math.max(2,Math.round(exportSize.width))>>1)<<1;
+    out.height=(Math.max(2,Math.round(exportSize.height))>>1)<<1;
     const oc=out.getContext('2d',{alpha:false,desynchronized:false});
 
     try{
@@ -33776,8 +33881,27 @@ initExportEngineOptions();$('#openExport').onclick=()=>openExportSheet();$('#clo
 $('#exportRes').onchange=()=>updateResolutionEstimate();
 $('#exportFps').onchange=async()=>{await refreshResolutionOptions();updateResolutionEstimate()};
 $('#qualityRange').oninput=()=>updateResolutionEstimate();
+function loadDemoPreset(){
+  const proj=AMEmbeddedPackage.projects?.[0];
+  if(!proj?.xml){toast('Preset demo tidak tersedia');return}
+  toast('Memuat preset demo ke timeline…');
+  try{
+    const scene=XMLBridge.parse(proj.xml,proj.xmlName||'Demo_Preset.xml');
+    clock.stop?.();
+    model.restore(scene,{timeOverride:0});
+    history.clear();
+    ui.authorizeEditorOpen();
+    ui.showEditor();
+    toast('Preset demo berhasil dibuka di timeline!');
+  }catch(e){
+    console.error(e);
+    toast('Gagal memuat preset demo: '+e.message);
+  }
+}
+window.loadDemoPreset=loadDemoPreset;
 $('#homeImportMain').onclick=()=>$('#projectInput').click();
 $('#homeAMLink').onclick=()=>AMIndependentLinkUI.open();
+$('#homeDemoPreset').onclick=()=>loadDemoPreset();
 $('#homeLanguageBtn').onclick=openLanguageModal;
 $('#languageClose').onclick=closeLanguageModal;
 $('#languageModal').onclick=e=>{if(e.target===$('#languageModal'))closeLanguageModal()};
@@ -36372,6 +36496,71 @@ window.omsAudioDiagnostics=OMSAudioDiagnostics.attach({hub:omsDiagnostics,model,
   try{sessionStorage.removeItem('oms4_resume_project')}catch(e){}
   ui.showHome();
   await ui.loadProjectList();
+
+  // Auto-import via URL Query Parameter: ?url=... or ?link=... or ?preset=... or ?demo=1
+  try{
+    const params=new URLSearchParams(window.location.search);
+    const presetUrl=params.get('url')||params.get('link')||params.get('preset')||params.get('am');
+    if(presetUrl){
+      toast('Mendeteksi link preset dari URL, mengimpor ke timeline…');
+      await AMLinkPackageImporter.import(presetUrl,'','official',msg=>toast(msg));
+    }else if(params.get('demo')||params.get('sample')){
+      loadDemoPreset();
+    }
+  }catch(err){
+    console.warn('[Auto-Preset Import Error]:',err);
+    toast('Gagal memuat preset otomatis: '+err.message);
+  }
+
+  // Global Drag & Drop on Home screen to open preset directly in timeline
+  window.addEventListener('dragover',e=>{
+    if(!$('#home').classList.contains('hidden')){
+      e.preventDefault();
+      e.dataTransfer.dropEffect='copy';
+    }
+  });
+  window.addEventListener('drop',async e=>{
+    if($('#home').classList.contains('hidden'))return;
+    const file=e.dataTransfer?.files?.[0];
+    if(!file)return;
+    if(/\.(xml|json)$/i.test(file.name)){
+      e.preventDefault();
+      toast('Membaca file preset…');
+      try{
+        const text=await file.text(),
+        isXML=/\.xml$/i.test(file.name)||/^\s*</.test(text),
+        raw=isXML?XMLBridge.parse(text,file.name):JSON.parse(text),
+        payload=!isXML&&['open-motion-v3','open-motion-v4'].includes(raw.format)?raw:raw;
+        if(!payload.project||!Array.isArray(payload.layers))throw Error('schema');
+        clock.stop?.();
+        model.restore(payload,{timeOverride:0});
+        history.clear();
+        ui.authorizeEditorOpen();
+        ui.showEditor();
+        toast('Preset dibuka langsung di timeline!');
+      }catch(err){
+        console.error(err);
+        toast('Gagal membuka file preset');
+      }
+    }
+  });
+
+  // Global Paste (Ctrl+V) on Home screen for Alight Motion links
+  window.addEventListener('paste',async e=>{
+    if($('#home').classList.contains('hidden'))return;
+    const activeEl=document.activeElement;
+    if(activeEl&&['INPUT','TEXTAREA','SELECT'].includes(activeEl.tagName))return;
+    const text=e.clipboardData?.getData('text')?.trim();
+    if(text&&/(alightcreative\.com|alight\.link)/i.test(text)){
+      e.preventDefault();
+      toast('Link preset terdeteksi dari clipboard! Mengimpor ke timeline…');
+      try{
+        await AMLinkPackageImporter.import(text,'','official',msg=>toast(msg));
+      }catch(err){
+        toast('Impor AM: '+err.message);
+      }
+    }
+  });
 })();
 })();
 </script>
@@ -38775,7 +38964,19 @@ html.omsMobileLandscapeDesktop #preRenderRecordBtn{left:35px!important}
   if('serviceWorker' in navigator && (location.protocol==='https:' ||
       location.hostname==='localhost' || location.hostname==='127.0.0.1')){
     window.addEventListener('load',()=>{
+      if('caches' in window){
+        caches.keys().then(keys => {
+          keys.forEach(k => {
+            if (k.startsWith('open-motion-pwa-') && k !== 'open-motion-pwa-v535') {
+              caches.delete(k);
+            }
+          });
+        }).catch(()=>{});
+      }
       navigator.serviceWorker.register('./sw.js',{scope:'./'})
+        .then(reg => {
+          reg.update().catch(()=>{});
+        })
         .catch(error=>console.warn('[Open Motion PWA] service worker gagal:',error));
     },{once:true});
   }
